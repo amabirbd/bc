@@ -1,9 +1,11 @@
 import bcrypt from "bcrypt";
 import { Request, Response } from "express";
-
+import jwt from "jsonwebtoken";
+import { redisService } from '../services/redisService';
 import User from "../models/User";
 import { SUCCESS_MESSAGES, ERROR_MESSAGES } from "../constants/messages";
 import { generateAccessToken, generateRefreshToken } from "../utils/jwt";
+import { AuthRequest } from '../middleware/authentication';
 
 export const signup = async (req: Request, res: Response): Promise<void> => {
   const { email, password } = req.body;
@@ -55,4 +57,30 @@ export const login = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
-export const logout = async (req: Request, res: Response): Promise<void> => {};
+export const logout = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const token = req.token;
+    
+    if (!token) {
+      res.status(401).json({ error: ERROR_MESSAGES.UNAUTHORIZED });
+      return;
+    }
+
+    const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET!) as jwt.JwtPayload;
+    if (!decoded || !decoded.exp) {
+      res.status(401).json({ error: ERROR_MESSAGES.UNAUTHORIZED });
+      return;
+    }
+
+    // Calculate remaining time until token expiration
+    const currentTime = Math.floor(Date.now() / 1000);
+    const expirationTime = decoded.exp - currentTime;
+
+    // Add token to blacklist
+    await redisService.blacklistToken(token, expirationTime);
+
+    res.status(204).send();
+  } catch (error) {
+    res.status(500).json({ error: ERROR_MESSAGES.INTERNAL_SERVER_ERROR });
+  }
+};
